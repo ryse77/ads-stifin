@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { db } from "@/lib/db"
-import { autoSelectBriefType, generateBriefContent } from "@/lib/brief-templates"
+import { autoSelectBriefType, generateBriefContent, generateBriefs } from "@/lib/brief-templates"
 import { createNotification, notifyRole, notifyStifin } from "@/lib/notifications"
 
 export async function GET(req: Request) {
@@ -91,8 +91,43 @@ export async function POST(req: Request) {
     const totalPayment = totalBudget + ppn
 
     const startDateObj = new Date(startDate)
-    const briefType = autoSelectBriefType()
-    const briefContent = generateBriefContent(briefType, city, startDateObj)
+    const day = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"][startDateObj.getDay()]
+    const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
+    const dateStr = `${startDateObj.getDate()} ${months[startDateObj.getMonth()]} ${startDateObj.getFullYear()}`
+
+    // Fetch dynamic templates from master database
+    const masterVO = await db.briefTemplate.findMany({ where: { type: "VO" } })
+    const masterJJ = await db.briefTemplate.findMany({ where: { type: "JJ" } })
+
+    let finalVO = ""
+    let finalJJ = ""
+
+    const replacePlaceholders = (text: string) => {
+      return text
+        .replace(/{city}/g, city)
+        .replace(/{day}/g, day)
+        .replace(/{date}/g, dateStr)
+    }
+
+    if (masterVO.length > 0) {
+      const selectedVO = masterVO[Math.floor(Math.random() * masterVO.length)]
+      finalVO = replacePlaceholders(selectedVO.content)
+    } else {
+      // Fallback to legacy hardcoded templates if DB is empty
+      const { vo } = generateBriefs(city, startDateObj)
+      finalVO = vo
+    }
+
+    if (masterJJ.length > 0) {
+      const selectedJJ = masterJJ[Math.floor(Math.random() * masterJJ.length)]
+      finalJJ = replacePlaceholders(selectedJJ.content)
+    } else {
+      const { jj } = generateBriefs(city, startDateObj)
+      finalJJ = jj
+    }
+
+    const briefType = "JJ & VO"
+    const briefContent = `[ BRIEF JEDAG-JEDUG (JJ) ]\n${finalJJ}\n\n------------------------------------------------------------\n\n[ BRIEF VOICE OVER (VO) ]\n${finalVO}`
 
     const adRequest = await db.adRequest.create({
       data: {
@@ -105,6 +140,8 @@ export async function POST(req: Request) {
         totalPayment,
         briefType,
         briefContent,
+        briefVO: finalVO,
+        briefJJ: finalJJ,
         promotorId: session.id,
       },
       include: {

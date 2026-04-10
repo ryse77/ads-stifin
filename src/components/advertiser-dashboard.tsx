@@ -14,6 +14,11 @@ import {
   DollarSign,
   TrendingUp,
   Loader2,
+  Plus,
+  Megaphone,
+  AlertCircle,
+  Copy,
+  Check,
 } from "lucide-react"
 
 import {
@@ -36,6 +41,7 @@ import {
 } from "@/components/ui/dialog"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -58,6 +64,13 @@ interface AdReport {
   amountSpent: number | null
 }
 
+interface BriefTemplate {
+  id: string
+  type: string
+  name: string
+  content: string
+}
+
 interface AdRequest {
   id: string
   promotorName: string
@@ -72,6 +85,8 @@ interface AdRequest {
   status: string
   briefType: string | null
   briefContent: string | null
+  briefVO: string | null
+  briefJJ: string | null
   paymentProofUrl: string | null
   adStartDate: string | null
   adEndDate: string | null
@@ -216,6 +231,22 @@ export default function AdvertiserDashboard() {
   const [customStartDate, setCustomStartDate] = useState("")
   const [customEndDate, setCustomEndDate] = useState("")
   const [schedulingId, setSchedulingId] = useState<string | null>(null)
+
+  // Brief editing states
+  const [editingBriefAd, setEditingBriefAd] = useState<AdRequest | null>(null)
+  const [editBriefVO, setEditBriefVO] = useState("")
+  const [editBriefJJ, setEditBriefJJ] = useState("")
+  const [updatingBrief, setUpdatingBrief] = useState(false)
+
+  // Master Brief states
+  const [briefTemplates, setBriefTemplates] = useState<BriefTemplate[]>([])
+  const [isTemplateDialogOpen, setIsTemplateDialogOpen] = useState(false)
+  const [editingTemplate, setEditingTemplate] = useState<BriefTemplate | null>(null)
+  const [templateType, setTemplateType] = useState<"VO" | "JJ">("VO")
+  const [templateName, setTemplateName] = useState("")
+  const [templateContent, setTemplateContent] = useState("")
+  const [savingTemplate, setSavingTemplate] = useState(false)
+  const [loadingTemplates, setLoadingTemplates] = useState(false)
   const [reportDialogId, setReportDialogId] = useState<string | null>(null)
   const [reportCpr, setReportCpr] = useState("")
   const [reportTotalLeads, setReportTotalLeads] = useState("")
@@ -225,6 +256,9 @@ export default function AdvertiserDashboard() {
   // Notification states
   const [notifLoading, setNotifLoading] = useState(false)
   const [readingNotifId, setReadingNotifId] = useState<string | null>(null)
+
+  // Copy state
+  const [copiedId, setCopiedId] = useState<string | null>(null)
 
   // ── Fetch ad requests ────────────────────────────────────────────────────
 
@@ -241,14 +275,7 @@ export default function AdvertiserDashboard() {
     }
   }, [])
 
-  useEffect(() => {
-    if (user) {
-      fetchAdRequests()
-    }
-  }, [user, fetchAdRequests])
-
   // ── Fetch notifications ──────────────────────────────────────────────────
-
   const fetchNotifications = useCallback(async () => {
     setNotifLoading(true)
     try {
@@ -264,11 +291,29 @@ export default function AdvertiserDashboard() {
     }
   }, [])
 
+  const fetchBriefTemplates = useCallback(async () => {
+    setLoadingTemplates(true)
+    try {
+      const res = await fetch("/api/brief-templates")
+      if (!res.ok) throw new Error("Gagal mengambil template")
+      const data = await res.json()
+      setBriefTemplates(data)
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setLoadingTemplates(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (user) {
+      fetchAdRequests()
       fetchNotifications()
+      fetchBriefTemplates()
     }
-  }, [user, fetchNotifications])
+  }, [user, fetchAdRequests, fetchNotifications, fetchBriefTemplates])
+
+
 
   // ── Computed stats ───────────────────────────────────────────────────────
 
@@ -324,6 +369,29 @@ export default function AdvertiserDashboard() {
       toast.error(message)
     } finally {
       setSchedulingId(null)
+    }
+  }
+
+  const handleUpdateBrief = async () => {
+    if (!editingBriefAd) return
+    setUpdatingBrief(true)
+    try {
+      const res = await fetch(`/api/ad-requests/${editingBriefAd.id}/brief`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          briefVO: editBriefVO,
+          briefJJ: editBriefJJ,
+        }),
+      })
+      if (!res.ok) throw new Error("Gagal update brief")
+      toast.success("Brief berhasil diperbarui!")
+      setEditingBriefAd(null)
+      fetchAdRequests()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Gagal update brief")
+    } finally {
+      setUpdatingBrief(false)
     }
   }
 
@@ -389,6 +457,57 @@ export default function AdvertiserDashboard() {
     } finally {
       setReadingNotifId(null)
     }
+  }
+
+  const handleSaveTemplate = async () => {
+    if (!templateName || !templateContent) {
+      toast.error("Nama dan konten wajib diisi")
+      return
+    }
+    setSavingTemplate(true)
+    try {
+      const url = editingTemplate 
+        ? `/api/brief-templates/${editingTemplate.id}` 
+        : "/api/brief-templates"
+      const res = await fetch(url, {
+        method: editingTemplate ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: templateType,
+          name: templateName,
+          content: templateContent,
+        }),
+      })
+      if (!res.ok) throw new Error("Gagal menyimpan template")
+      toast.success("Template berhasil disimpan!")
+      setIsTemplateDialogOpen(false)
+      fetchBriefTemplates()
+    } catch (err) {
+      toast.error("Gagal menyimpan template")
+    } finally {
+      setSavingTemplate(false)
+    }
+  }
+
+  const handleDeleteTemplate = async (id: string) => {
+    if (!confirm("Hapus template ini?")) return
+    try {
+      const res = await fetch(`/api/brief-templates/${id}`, {
+        method: "DELETE",
+      })
+      if (!res.ok) throw new Error("Gagal menghapus")
+      toast.success("Template dihapus")
+      fetchBriefTemplates()
+    } catch (err) {
+      toast.error("Gagal menghapus template")
+    }
+  }
+
+  const handleCopy = (text: string, id: string) => {
+    navigator.clipboard.writeText(text)
+    setCopiedId(id)
+    setTimeout(() => setCopiedId(null), 2000)
+    toast.success("Teks berhasil disalin!")
   }
 
   // ── Loading state ────────────────────────────────────────────────────────
@@ -565,8 +684,16 @@ export default function AdvertiserDashboard() {
         </Card>
       </div>
 
-      {/* ── Ad Request Cards ──────────────────────────────────────────────── */}
-      <div className="space-y-4">
+      {/* ── Tabs ─────────────────────────────────────────────────────────── */}
+      <Tabs defaultValue="iklan" className="w-full">
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="iklan">Daftar Iklan</TabsTrigger>
+          <TabsTrigger value="master-brief">Master Brief (VO & JJ)</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="iklan" className="space-y-6 mt-6">
+          {/* Ad Request Cards */}
+          <div className="space-y-4">
         <div>
           <h2 className="text-lg font-semibold">Daftar Pengajuan Iklan</h2>
           <p className="text-sm text-muted-foreground">
@@ -612,8 +739,20 @@ export default function AdvertiserDashboard() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {/* Jadwal Info - advertiser specific */}
-                  <div className="rounded-lg bg-muted/50 border p-3 text-sm font-medium">
-                    {formatJadwalInfo(ad.startDate, ad.city)}
+                  <div className="rounded-lg bg-muted/50 border p-3 text-sm font-medium flex items-center justify-between group">
+                    <span>{formatJadwalInfo(ad.startDate, ad.city)}</span>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={() => handleCopy(formatJadwalInfo(ad.startDate, ad.city), ad.id)}
+                    >
+                      {copiedId === ad.id ? (
+                        <Check className="h-4 w-4 text-green-600" />
+                      ) : (
+                        <Copy className="h-4 w-4 text-muted-foreground" />
+                      )}
+                    </Button>
                   </div>
 
                   {/* Info grid */}
@@ -760,6 +899,8 @@ export default function AdvertiserDashboard() {
                         </DialogContent>
                       </Dialog>
                     )}
+
+
 
                     {/* IKLAN_BERJALAN → Input Laporan Iklan */}
                     {ad.status === "IKLAN_BERJALAN" && (
@@ -994,6 +1135,160 @@ export default function AdvertiserDashboard() {
           </div>
         )}
       </div>
+    </TabsContent>
+
+        <TabsContent value="master-brief" className="space-y-6 mt-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-semibold">Master Database Brief</h2>
+              <p className="text-sm text-muted-foreground">Kelola template brief untuk digunakan otomatis oleh sistem</p>
+            </div>
+            <Button onClick={() => {
+              setEditingTemplate(null)
+              setTemplateType("VO")
+              setTemplateName("")
+              setTemplateContent("")
+              setIsTemplateDialogOpen(true)
+            }}>
+              <Plus className="h-4 w-4 mr-2" />
+              Tambah Konten Brief
+            </Button>
+          </div>
+
+          <Dialog open={isTemplateDialogOpen} onOpenChange={setIsTemplateDialogOpen}>
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>{editingTemplate ? "Edit Template" : "Tambah Template Brief"}</DialogTitle>
+                <DialogDescription>
+                  Gunakan variabel <strong>{`{city}`}</strong>, <strong>{`{day}`}</strong>, dan <strong>{`{date}`}</strong> untuk penggantian otomatis.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Jenis Konten</Label>
+                    <div className="flex gap-2">
+                      <Button 
+                        type="button"
+                        variant={templateType === "VO" ? "default" : "outline"}
+                        className="flex-1"
+                        onClick={() => setTemplateType("VO")}
+                      >VO</Button>
+                      <Button 
+                        type="button"
+                        variant={templateType === "JJ" ? "default" : "outline"}
+                        className="flex-1"
+                        onClick={() => setTemplateType("JJ")}
+                      >JJ</Button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Nama Template (Label)</Label>
+                    <Input 
+                      placeholder="Contoh: Promo Ramadhan Kota..." 
+                      value={templateName}
+                      onChange={(e) => setTemplateName(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Isi Konten Brief</Label>
+                  <Textarea 
+                    className="min-h-[300px] font-mono text-sm" 
+                    placeholder="Masukkan konten brief di sini..."
+                    value={templateContent}
+                    onChange={(e) => setTemplateContent(e.target.value)}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsTemplateDialogOpen(false)}>Batal</Button>
+                <Button onClick={handleSaveTemplate} disabled={savingTemplate}>
+                  {savingTemplate ? <Loader2 className="h-4 w-4 animate-spin" /> : "Simpan Template"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* VO Section */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 font-bold text-blue-700 p-2 bg-blue-50 rounded-lg w-fit">
+                <Megaphone className="h-4 w-4" />
+                Daftar Master Brief Voice Over (VO)
+              </div>
+              <div className="space-y-3">
+                {briefTemplates.filter(t => t.type === "VO").length === 0 ? (
+                  <div className="text-center py-10 border rounded-lg bg-muted/20 text-muted-foreground text-sm">
+                    Belum ada template VO
+                  </div>
+                ) : (
+                  briefTemplates.filter(t => t.type === "VO").map(t => (
+                    <Card key={t.id} className="overflow-hidden">
+                      <CardHeader className="py-3 bg-muted/30 flex flex-row items-center justify-between space-y-0">
+                        <CardTitle className="text-sm">{t.name}</CardTitle>
+                        <div className="flex gap-1">
+                          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => {
+                            setEditingTemplate(t)
+                            setTemplateType("VO")
+                            setTemplateName(t.name)
+                            setTemplateContent(t.content)
+                            setIsTemplateDialogOpen(true)
+                          }}><FileText className="h-3 w-3" /></Button>
+                          <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => handleDeleteTemplate(t.id)}><AlertCircle className="h-3 w-3" /></Button>
+                        </div>
+                      </CardHeader>
+                      <CardContent className="py-3">
+                        <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap font-mono">
+                          {t.content}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* JJ Section */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 font-bold text-amber-700 p-2 bg-amber-50 rounded-lg w-fit">
+                <Play className="h-4 w-4" />
+                Daftar Master Brief Jedag-Jedug (JJ)
+              </div>
+              <div className="space-y-3">
+                {briefTemplates.filter(t => t.type === "JJ").length === 0 ? (
+                  <div className="text-center py-10 border rounded-lg bg-muted/20 text-muted-foreground text-sm">
+                    Belum ada template JJ
+                  </div>
+                ) : (
+                  briefTemplates.filter(t => t.type === "JJ").map(t => (
+                    <Card key={t.id} className="overflow-hidden">
+                      <CardHeader className="py-3 bg-muted/30 flex flex-row items-center justify-between space-y-0">
+                        <CardTitle className="text-sm">{t.name}</CardTitle>
+                        <div className="flex gap-1">
+                          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => {
+                            setEditingTemplate(t)
+                            setTemplateType("JJ")
+                            setTemplateName(t.name)
+                            setTemplateContent(t.content)
+                            setIsTemplateDialogOpen(true)
+                          }}><FileText className="h-3 w-3" /></Button>
+                          <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => handleDeleteTemplate(t.id)}><AlertCircle className="h-3 w-3" /></Button>
+                        </div>
+                      </CardHeader>
+                      <CardContent className="py-3">
+                        <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap font-mono">
+                          {t.content}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

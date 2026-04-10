@@ -111,9 +111,14 @@ export function autoSelectBriefType(): string {
   return "JJ & VO"
 }
 
+export function generateBriefs(city: string, date: Date) {
+  return {
+    jj: generateBriefJJ(city, date),
+    vo: generateBriefVO(city, date)
+  };
+}
+
 export function generateBriefContent(briefType: string, city: string, date: Date): string {
-  const briefJJ = generateBriefJJ(city, date);
-  const briefVO = generateBriefVO(city, date);
-  
-  return `${briefJJ}\n\n------------------------------------------------------------\n\n${briefVO}`;
+  const { jj, vo } = generateBriefs(city, date);
+  return `${jj}\n\n------------------------------------------------------------\n\n${vo}`;
 }
