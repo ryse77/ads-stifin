@@ -1,0 +1,1224 @@
+"use client"
+
+import { useState, useEffect, useCallback, useRef } from "react"
+import { useAuth } from "@/lib/auth-context"
+import { toast } from "sonner"
+import {
+  Plus,
+  Upload,
+  Download,
+  FileText,
+  Calendar,
+  DollarSign,
+  BarChart3,
+  Users,
+  Search,
+  Megaphone,
+  Clock,
+  CheckCircle,
+  AlertCircle,
+  CalendarCheck,
+  Building2,
+} from "lucide-react"
+
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardContent,
+  CardDescription,
+} from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import {
+  Dialog,
+  DialogTrigger,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { Separator } from "@/components/ui/separator"
+import { Skeleton } from "@/components/ui/skeleton"
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+interface PromotorResult {
+  id: string
+  totalClients: number
+  note: string | null
+  status: string
+}
+
+interface AdReport {
+  id: string
+  cpr: number | null
+  totalLeads: number | null
+  amountSpent: number | null
+}
+
+interface AdRequest {
+  id: string
+  city: string
+  startDate: string
+  durationDays: number
+  dailyBudget: number
+  totalBudget: number
+  ppn: number
+  totalPayment: number
+  status: string
+  paymentProofUrl: string | null
+  contentUrl: string | null
+  adStartDate: string | null
+  adEndDate: string | null
+  createdAt: string
+  updatedAt: string
+  promotorResult: PromotorResult | null
+  adReport: AdReport | null
+  promotor: { id: string; name: string; email: string; city: string }
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const formatRupiah = (value: number): string =>
+  `Rp ${value.toLocaleString("id-ID")}`
+
+const formatDate = (dateStr: string): string => {
+  const date = new Date(dateStr)
+  return date.toLocaleDateString("id-ID", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  })
+}
+
+const statusConfig: Record<
+  string,
+  { label: string; variant: "default" | "secondary" | "destructive" | "outline"; className: string }
+> = {
+  MENUNGGU_PEMBAYARAN: {
+    label: "Menunggu Pembayaran",
+    variant: "outline",
+    className: "border-amber-500 text-amber-700 bg-amber-50",
+  },
+  MENUNGGU_KONTEN: {
+    label: "Menunggu Konten",
+    variant: "outline",
+    className: "border-orange-500 text-orange-700 bg-orange-50",
+  },
+  DIPROSES: {
+    label: "Diproses",
+    variant: "outline",
+    className: "border-blue-500 text-blue-700 bg-blue-50",
+  },
+  KONTEN_SELESAI: {
+    label: "Konten Selesai",
+    variant: "outline",
+    className: "border-green-500 text-green-700 bg-green-50",
+  },
+  IKLAN_DIJADWALKAN: {
+    label: "Iklan Dijadwalkan",
+    variant: "outline",
+    className: "border-blue-500 text-blue-700 bg-blue-50",
+  },
+  IKLAN_BERJALAN: {
+    label: "Iklan Berjalan",
+    variant: "outline",
+    className: "border-purple-500 text-purple-700 bg-purple-50",
+  },
+  SELESAI: {
+    label: "Selesai",
+    variant: "secondary",
+    className: "border-gray-400 text-gray-600 bg-gray-100",
+  },
+}
+
+const getStatusBadge = (status: string) => {
+  const config = statusConfig[status]
+  if (!config) {
+    return (
+      <Badge variant="outline" className="border-gray-400 text-gray-600">
+        {status}
+      </Badge>
+    )
+  }
+  return (
+    <Badge variant={config.variant} className={config.className}>
+      {config.label}
+    </Badge>
+  )
+}
+
+// ─── Status Flow Order ───────────────────────────────────────────────────────
+
+const STATUS_ORDER = [
+  "MENUNGGU_PEMBAYARAN",
+  "MENUNGGU_KONTEN",
+  "DIPROSES",
+  "KONTEN_SELESAI",
+  "IKLAN_DIJADWALKAN",
+  "IKLAN_BERJALAN",
+  "SELESAI",
+]
+
+const isAtOrAfter = (status: string, target: string): boolean => {
+  return STATUS_ORDER.indexOf(status) >= STATUS_ORDER.indexOf(target)
+}
+
+// ─── Component ───────────────────────────────────────────────────────────────
+
+export default function PromotorDashboard() {
+  const { user } = useAuth()
+  const [adRequests, setAdRequests] = useState<AdRequest[]>([])
+  const [globalAds, setGlobalAds] = useState<AdRequest[]>([])
+  const [loading, setLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [globalSearch, setGlobalSearch] = useState("")
+  const [submitting, setSubmitting] = useState(false)
+
+  // Dialog states
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [uploadDialogId, setUploadDialogId] = useState<string | null>(null)
+  const [resultDialogId, setResultDialogId] = useState<string | null>(null)
+
+  // Form state for create
+  const [formCity, setFormCity] = useState("")
+  const [formStartDate, setFormStartDate] = useState("")
+  const [formDuration, setFormDuration] = useState("")
+  const [formDailyBudget, setFormDailyBudget] = useState("")
+
+  // Upload state
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
+
+  // Result state
+  const [resultClients, setResultClients] = useState("")
+  const [resultNote, setResultNote] = useState("")
+  const [submittingResult, setSubmittingResult] = useState(false)
+
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // ── Fetch data ─────────────────────────────────────────────────────────────
+
+  const fetchAdRequests = useCallback(async () => {
+    try {
+      const res = await fetch("/api/ad-requests")
+      if (!res.ok) {
+        throw new Error("Gagal mengambil data")
+      }
+      const data: AdRequest[] = await res.json()
+      setAdRequests(data)
+    } catch {
+      toast.error("Gagal memuat data pengajuan iklan")
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const fetchGlobalAds = useCallback(async () => {
+    try {
+      const res = await fetch("/api/ad-requests?scope=all")
+      if (!res.ok) throw new Error("Gagal mengambil data global")
+      const data: AdRequest[] = await res.json()
+      // Only show ads with reports for future decision making
+      const adsWithReports = data.filter(ad => ad.adReport !== null)
+      setGlobalAds(adsWithReports)
+    } catch {
+      console.error("Failed to fetch global ads")
+    }
+  }, [])
+
+  useEffect(() => {
+    if (user) {
+      fetchAdRequests()
+      fetchGlobalAds()
+    }
+  }, [user, fetchAdRequests, fetchGlobalAds])
+
+  // ── Computed stats ─────────────────────────────────────────────────────────
+
+  const totalPengajuan = adRequests.length
+  const iklanBerjalan = adRequests.filter(
+    (r) => r.status === "IKLAN_BERJALAN"
+  ).length
+  const totalKlien = adRequests.reduce((sum, r) => {
+    if (r.promotorResult) {
+      return sum + r.promotorResult.totalClients
+    }
+    return sum
+  }, 0)
+
+  // ── Create ad request ─────────────────────────────────────────────────────
+
+  const handleCreate = async () => {
+    if (!formCity || !formStartDate || !formDuration || !formDailyBudget) {
+      toast.error("Semua field wajib diisi")
+      return
+    }
+
+    const durationDays = parseInt(formDuration, 10)
+    const dailyBudget = parseInt(formDailyBudget, 10)
+
+    if (isNaN(durationDays) || durationDays <= 0) {
+      toast.error("Durasi harus berupa angka positif")
+      return
+    }
+    if (isNaN(dailyBudget) || dailyBudget <= 0) {
+      toast.error("Budget harus berupa angka positif")
+      return
+    }
+
+    setSubmitting(true)
+    try {
+      const res = await fetch("/api/ad-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          city: formCity,
+          startDate: formStartDate,
+          durationDays,
+          dailyBudget,
+        }),
+      })
+
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || "Gagal membuat pengajuan")
+      }
+
+      toast.success("Pengajuan iklan berhasil dibuat!")
+      setCreateDialogOpen(false)
+      setFormCity("")
+      setFormStartDate("")
+      setFormDuration("")
+      setFormDailyBudget("")
+      fetchAdRequests()
+    } catch (err: any) {
+      toast.error(err.message || "Gagal membuat pengajuan")
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // ── Upload proof ──────────────────────────────────────────────────────────
+
+  const handleUploadProof = async () => {
+    if (!uploadDialogId || !uploadFile) {
+      toast.error("Pilih file bukti transfer terlebih dahulu")
+      return
+    }
+
+    setUploading(true)
+    try {
+      // 1. Upload file
+      const formData = new FormData()
+      formData.append("file", uploadFile)
+      const uploadRes = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      })
+      if (!uploadRes.ok) {
+        throw new Error("Gagal upload file")
+      }
+      const { url } = await uploadRes.json()
+
+      // 2. Submit proof URL
+      const proofRes = await fetch(
+        `/api/ad-requests/${uploadDialogId}/upload-proof`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ paymentProofUrl: url }),
+        }
+      )
+      if (!proofRes.ok) {
+        const err = await proofRes.json()
+        throw new Error(err.error || "Gagal upload bukti transfer")
+      }
+
+      toast.success("Bukti transfer berhasil diupload!")
+      setUploadDialogId(null)
+      setUploadFile(null)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ""
+      }
+      fetchAdRequests()
+    } catch (err: any) {
+      toast.error(err.message || "Gagal upload bukti transfer")
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  // ── Submit promotor result ────────────────────────────────────────────────
+
+  const handleSubmitResult = async () => {
+    if (!resultDialogId || !resultClients) {
+      toast.error("Jumlah klien wajib diisi")
+      return
+    }
+
+    const totalClients = parseInt(resultClients, 10)
+    if (isNaN(totalClients) || totalClients < 0) {
+      toast.error("Jumlah klien harus berupa angka non-negatif")
+      return
+    }
+
+    setSubmittingResult(true)
+    try {
+      const res = await fetch(
+        `/api/ad-requests/${resultDialogId}/promotor-result`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ totalClients, note: resultNote || null }),
+        }
+      )
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || "Gagal input hasil")
+      }
+
+      toast.success("Hasil berhasil disimpan!")
+      setResultDialogId(null)
+      setResultClients("")
+      setResultNote("")
+      fetchAdRequests()
+    } catch (err: any) {
+      toast.error(err.message || "Gagal input hasil")
+    } finally {
+      setSubmittingResult(false)
+    }
+  }
+
+  // ── Calculated form summary ───────────────────────────────────────────────
+
+  const calcDuration = parseInt(formDuration, 10) || 0
+  const calcDailyBudget = parseInt(formDailyBudget, 10) || 0
+  const calcTotalBudget = calcDuration * calcDailyBudget
+  const calcPPn = Math.round(calcTotalBudget * 0.11)
+  const calcTotalPayment = calcTotalBudget + calcPPn
+
+  // ── Filtered history ──────────────────────────────────────────────────────
+
+  const filteredHistory = adRequests.filter((r) =>
+    r.city.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
+  // ── Loading state ─────────────────────────────────────────────────────────
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        {/* Stats skeleton */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {[1, 2, 3].map((i) => (
+            <Card key={i}>
+              <CardHeader className="pb-2">
+                <Skeleton className="h-4 w-24" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-8 w-16" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        {/* Tabs skeleton */}
+        <Card>
+          <CardHeader>
+            <Skeleton className="h-8 w-48" />
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {[1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-24 w-full rounded-lg" />
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return null
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  return (
+    <div className="space-y-6">
+      {/* ── Stats Cards ──────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Total Pengajuan Iklan
+            </CardTitle>
+            <Megaphone className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{totalPengajuan}</div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Iklan Berjalan
+            </CardTitle>
+            <Clock className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{iklanBerjalan}</div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Total Klien dari Iklan
+            </CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{totalKlien}</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* ── Main Tabs ───────────────────────────────────────────────────── */}
+      <Tabs defaultValue="pengajuan" className="w-full">
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="pengajuan">Pengajuan Iklan</TabsTrigger>
+          <TabsTrigger value="riwayat">Riwayat Iklan</TabsTrigger>
+          <TabsTrigger value="data-iklan">Data Iklan</TabsTrigger>
+        </TabsList>
+
+        {/* ── Pengajuan Iklan Tab ───────────────────────────────────────── */}
+        <TabsContent value="pengajuan" className="space-y-4 mt-4">
+          {/* Create button */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold">Daftar Pengajuan Iklan</h2>
+              <p className="text-sm text-muted-foreground">
+                Kelola pengajuan iklan Anda
+              </p>
+            </div>
+            <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Buat Pengajuan Iklan
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Buat Pengajuan Iklan</DialogTitle>
+                  <CardDescription>
+                    Isi detail pengajuan iklan baru Anda
+                  </CardDescription>
+                </DialogHeader>
+
+                <div className="space-y-4 py-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="city">Nama Kota</Label>
+                    <Input
+                      id="city"
+                      placeholder="Contoh: Jakarta Selatan"
+                      value={formCity}
+                      onChange={(e) => setFormCity(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="startDate">Tanggal Mulai</Label>
+                    <Input
+                      id="startDate"
+                      type="date"
+                      value={formStartDate}
+                      onChange={(e) => setFormStartDate(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="duration">Durasi Iklan (hari)</Label>
+                    <Input
+                      id="duration"
+                      type="number"
+                      placeholder="Contoh: 14"
+                      min={1}
+                      value={formDuration}
+                      onChange={(e) => setFormDuration(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="budget">Budget Per Hari (Rupiah)</Label>
+                    <Input
+                      id="budget"
+                      type="number"
+                      placeholder="Contoh: 50000"
+                      min={1}
+                      value={formDailyBudget}
+                      onChange={(e) => setFormDailyBudget(e.target.value)}
+                    />
+                  </div>
+
+                  {/* Calculated summary */}
+                  {calcTotalBudget > 0 && (
+                    <>
+                      <Separator />
+                      <div className="rounded-lg bg-muted/50 p-4 space-y-2">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">
+                            Total Budget ({calcDuration} hari)
+                          </span>
+                          <span className="font-medium">
+                            {formatRupiah(calcTotalBudget)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">
+                            PPn 11%
+                          </span>
+                          <span className="font-medium">
+                            {formatRupiah(calcPPn)}
+                          </span>
+                        </div>
+                        <Separator />
+                        <div className="flex justify-between text-sm font-semibold">
+                          <span>Total Pembayaran</span>
+                          <span>{formatRupiah(calcTotalPayment)}</span>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setCreateDialogOpen(false)}
+                    disabled={submitting}
+                  >
+                    Batal
+                  </Button>
+                  <Button onClick={handleCreate} disabled={submitting}>
+                    {submitting ? "Mengirim..." : "Ajukan Iklan"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
+
+          {/* Ad request cards */}
+          {adRequests.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+                <Megaphone className="h-12 w-12 text-muted-foreground mb-4" />
+                <h3 className="text-lg font-medium">Belum ada pengajuan</h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Klik tombol &quot;Buat Pengajuan Iklan&quot; untuk memulai
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-4">
+              {adRequests.map((ad) => (
+                <Card key={ad.id}>
+                  <CardHeader>
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                      <div className="space-y-1">
+                        <CardTitle className="text-base flex items-center gap-2">
+                          <DollarSign className="h-4 w-4 text-muted-foreground" />
+                          {ad.city}
+                        </CardTitle>
+                        <CardDescription className="text-xs">
+                          Dibuat {formatDate(ad.createdAt)}
+                        </CardDescription>
+                      </div>
+                      {getStatusBadge(ad.status)}
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {/* Info grid */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                      <div className="space-y-1">
+                        <p className="text-muted-foreground flex items-center gap-1">
+                          <Calendar className="h-3 w-3" />
+                          Tanggal Mulai
+                        </p>
+                        <p className="font-medium">
+                          {formatDate(ad.startDate)}
+                        </p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-muted-foreground flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          Durasi
+                        </p>
+                        <p className="font-medium">{ad.durationDays} hari</p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-muted-foreground flex items-center gap-1">
+                          <DollarSign className="h-3 w-3" />
+                          Budget/Hari
+                        </p>
+                        <p className="font-medium">
+                          {formatRupiah(ad.dailyBudget)}
+                        </p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-muted-foreground flex items-center gap-1">
+                          <DollarSign className="h-3 w-3" />
+                          Total Bayar
+                        </p>
+                        <p className="font-medium">
+                          {formatRupiah(ad.totalPayment)}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Scheduled Info Section */}
+                    {ad.adStartDate && (
+                      <div className={`rounded-lg p-3 border text-sm space-y-2 ${
+                        ad.status === "IKLAN_DIJADWALKAN" 
+                          ? "bg-blue-50 border-blue-100 text-blue-800"
+                          : "bg-muted/30 border-muted"
+                      }`}>
+                        <div className="flex items-center gap-2 font-medium">
+                          <CalendarCheck className="h-4 w-4" />
+                          Jadwal Tayang Iklan
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                          <div className="flex justify-between">
+                            <span className="opacity-70">Mulai:</span>
+                            <span className="font-semibold">{new Date(ad.adStartDate).toLocaleString("id-ID", { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="opacity-70">Berakhir:</span>
+                            <span className="font-semibold">{new Date(ad.adEndDate!).toLocaleString("id-ID", { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+
+                    {/* Action buttons based on status */}
+                    <div className="flex flex-wrap gap-2">
+                      {/* MENUNGGU_PEMBAYARAN → Upload bukti transfer */}
+                      {ad.status === "MENUNGGU_PEMBAYARAN" && (
+                        <>
+                          <Dialog
+                            open={uploadDialogId === ad.id}
+                            onOpenChange={(open) => {
+                              if (open) {
+                                setUploadDialogId(ad.id)
+                              } else {
+                                setUploadDialogId(null)
+                                setUploadFile(null)
+                              }
+                            }}
+                          >
+                            <DialogTrigger asChild>
+                              <Button variant="outline" size="sm">
+                                <Upload className="h-4 w-4 mr-2" />
+                                Upload Bukti Transfer
+                              </Button>
+                            </DialogTrigger>
+                            <DialogContent className="sm:max-w-md">
+                              <DialogHeader>
+                                <DialogTitle>Upload Bukti Transfer</DialogTitle>
+                                <CardDescription>
+                                  Upload bukti pembayaran untuk pengajuan iklan di{" "}
+                                  <strong>{ad.city}</strong>
+                                </CardDescription>
+                              </DialogHeader>
+                              <div className="space-y-4 py-2">
+                                <div className="rounded-lg bg-muted/50 p-4 space-y-1">
+                                  <p className="text-sm text-muted-foreground">
+                                    Total Pembayaran
+                                  </p>
+                                  <p className="text-xl font-bold">
+                                    {formatRupiah(ad.totalPayment)}
+                                  </p>
+                                </div>
+                                <div className="space-y-2">
+                                  <Label htmlFor={`proof-${ad.id}`}>
+                                    File Bukti Transfer
+                                  </Label>
+                                  <Input
+                                    id={`proof-${ad.id}`}
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept="image/*,.pdf"
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0]
+                                      if (file) setUploadFile(file)
+                                    }}
+                                  />
+                                  {uploadFile && (
+                                    <p className="text-xs text-muted-foreground">
+                                      Dipilih: {uploadFile.name}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                              <DialogFooter>
+                                <Button
+                                  variant="outline"
+                                  onClick={() => {
+                                    setUploadDialogId(null)
+                                    setUploadFile(null)
+                                  }}
+                                  disabled={uploading}
+                                >
+                                  Batal
+                                </Button>
+                                <Button
+                                  onClick={handleUploadProof}
+                                  disabled={uploading || !uploadFile}
+                                >
+                                  {uploading ? "Mengupload..." : "Upload"}
+                                </Button>
+                              </DialogFooter>
+                            </DialogContent>
+                          </Dialog>
+                        </>
+                      )}
+
+                      {/* KONTEN_SELESAI or later → Download konten */}
+                      {isAtOrAfter(ad.status, "KONTEN_SELESAI") &&
+                        ad.contentUrl && (
+                          <Button variant="outline" size="sm" asChild>
+                            <a href={ad.contentUrl} download>
+                              <Download className="h-4 w-4 mr-2" />
+                              Download Konten
+                            </a>
+                          </Button>
+                        )}
+
+                      {/* Laporan Promotor (Jumlah Klien) - Muncul setelah Advertiser input laporan (SELESAI) */}
+                      {ad.status === "SELESAI" && ad.adReport && (
+                        <Dialog
+                          open={resultDialogId === ad.id}
+                          onOpenChange={(open) => {
+                            if (open) {
+                              setResultDialogId(ad.id)
+                              // Pre-fill if result exists
+                              if (ad.promotorResult) {
+                                setResultClients(
+                                  String(ad.promotorResult.totalClients)
+                                )
+                                setResultNote(ad.promotorResult.note || "")
+                              } else {
+                                setResultClients("")
+                                setResultNote("")
+                              }
+                            } else {
+                              setResultDialogId(null)
+                            }
+                          }}
+                        >
+                          <DialogTrigger asChild>
+                            <Button variant="outline" size="sm" className={ad.promotorResult?.status === "VALID" ? "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100" : "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100 hover:text-amber-800"}>
+                              <FileText className="h-4 w-4 mr-2" />
+                              {ad.promotorResult?.status === "VALID" ? "Ajukan Revisi" : "Input Jumlah Klien"}
+                            </Button>
+                          </DialogTrigger>
+                          <DialogContent className="sm:max-w-md">
+                            <DialogHeader>
+                              <DialogTitle>{ad.promotorResult?.status === "VALID" ? "Ajukan Revisi Laporan" : "Input Laporan Klien"}</DialogTitle>
+                              <CardDescription>
+                                {ad.promotorResult?.status === "VALID" 
+                                  ? "Anda sedang mengajukan revisi untuk laporan yang sudah divalidasi."
+                                  : `Laporkan jumlah klien yang didapat dari iklan di ${ad.city}`}
+                              </CardDescription>
+                            </DialogHeader>
+                            {ad.promotorResult?.status === "VALID" && (
+                              <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-xs text-amber-800 flex items-start gap-2 mb-2">
+                                <AlertCircle className="h-4 w-4 shrink-0" />
+                                <p>
+                                  <strong>Peringatan Revisi:</strong> Mengubah data akan menghapus status <strong>Valid</strong> dan laporan Anda akan memerlukan persetujuan ulang dari Admin STIFIn.
+                                </p>
+                              </div>
+                            )}
+                            <div className="space-y-4 py-2">
+                              <div className="space-y-2">
+                                <Label htmlFor={`clients-${ad.id}`}>
+                                  Jumlah Klien
+                                </Label>
+                                <Input
+                                  id={`clients-${ad.id}`}
+                                  type="number"
+                                  placeholder="Masukkan jumlah klien..."
+                                  min={0}
+                                  value={resultClients}
+                                  onChange={(e) =>
+                                    setResultClients(e.target.value)
+                                  }
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor={`note-${ad.id}`}>Catatan</Label>
+                                <Input
+                                  id={`note-${ad.id}`}
+                                  type="text"
+                                  placeholder="Catatan tambahan (opsional)..."
+                                  value={resultNote}
+                                  onChange={(e) =>
+                                    setResultNote(e.target.value)
+                                  }
+                                />
+                              </div>
+                            </div>
+                            <DialogFooter>
+                              <Button
+                                variant="outline"
+                                onClick={() => setResultDialogId(null)}
+                                disabled={submittingResult}
+                              >
+                                Batal
+                              </Button>
+                              <Button
+                                onClick={handleSubmitResult}
+                                disabled={submittingResult}
+                              >
+                                {submittingResult ? "Menyimpan..." : (ad.promotorResult?.status === "VALID" ? "Simpan Revisi" : "Simpan Hasil")}
+                              </Button>
+                            </DialogFooter>
+                          </DialogContent>
+                        </Dialog>
+                      )}
+                    </div>
+
+                    {/* Promotor result display */}
+                    {ad.promotorResult && isAtOrAfter(ad.status, "KONTEN_SELESAI") && (
+                      <div className="rounded-lg bg-muted/50 p-4 space-y-2">
+                        <div className="flex items-center justify-between gap-2 text-sm font-medium">
+                          <div className="flex items-center gap-2">
+                            <CheckCircle className="h-4 w-4 text-green-600" />
+                            Hasil Promotor
+                          </div>
+                          {ad.promotorResult.status === "VALID" ? (
+                            <Badge className="bg-green-100 text-green-800 border-green-300">
+                              Sudah Valid
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50">
+                              Menunggu Validasi
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <span className="text-muted-foreground">
+                              Jumlah Klien:{" "}
+                            </span>
+                            <span className="font-medium">
+                              {ad.promotorResult.totalClients}
+                            </span>
+                          </div>
+                          {ad.promotorResult.note && (
+                            <div>
+                              <span className="text-muted-foreground">
+                                Catatan:{" "}
+                              </span>
+                              <span className="font-medium">
+                                {ad.promotorResult.note}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Ad Report display */}
+                    {ad.adReport && (
+                      <div className="rounded-lg border p-4 space-y-2">
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <AlertCircle className="h-4 w-4 text-blue-600" />
+                          Laporan Iklan
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                          {ad.adReport.cpr !== null && (
+                            <div>
+                              <span className="text-muted-foreground">
+                                CPR:{" "}
+                              </span>
+                              <span className="font-medium">
+                                {formatRupiah(Math.round(ad.adReport.cpr))}
+                              </span>
+                            </div>
+                          )}
+                          {ad.adReport.totalLeads !== null && (
+                            <div>
+                              <span className="text-muted-foreground">
+                                Total Leads:{" "}
+                              </span>
+                              <span className="font-medium">
+                                {ad.adReport.totalLeads}
+                              </span>
+                            </div>
+                          )}
+                          {ad.adReport.amountSpent !== null && (
+                            <div>
+                              <span className="text-muted-foreground">
+                                Total Spend:{" "}
+                              </span>
+                              <span className="font-medium">
+                                {formatRupiah(ad.adReport.amountSpent)}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ── Riwayat Iklan Tab ──────────────────────────────────────────── */}
+        <TabsContent value="riwayat" className="space-y-4 mt-4">
+          <div className="space-y-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Cari berdasarkan kota..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+
+            {filteredHistory.length === 0 ? (
+              <Card>
+                <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+                  <FileText className="h-12 w-12 text-muted-foreground mb-4" />
+                  <h3 className="text-lg font-medium">
+                    {searchQuery
+                      ? "Tidak ada hasil yang ditemukan"
+                      : "Belum ada riwayat"}
+                  </h3>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {searchQuery
+                      ? `Tidak ada pengajuan untuk "${searchQuery}"`
+                      : "Riwayat pengajuan iklan akan tampil di sini"}
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card>
+                <CardContent className="p-0">
+                  {/* Desktop table */}
+                  <div className="hidden md:block overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b bg-muted/50">
+                          <th className="text-left p-4 font-medium text-muted-foreground">
+                            Kota
+                          </th>
+                          <th className="text-left p-4 font-medium text-muted-foreground">
+                            Tanggal
+                          </th>
+                          <th className="text-left p-4 font-medium text-muted-foreground">
+                            Durasi
+                          </th>
+                          <th className="text-left p-4 font-medium text-muted-foreground">
+                            Budget
+                          </th>
+                          <th className="text-left p-4 font-medium text-muted-foreground">
+                            Status
+                          </th>
+
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredHistory.map((ad) => (
+                          <tr
+                            key={ad.id}
+                            className="border-b last:border-0 hover:bg-muted/30 transition-colors"
+                          >
+                            <td className="p-4 font-medium">{ad.city}</td>
+                            <td className="p-4">{formatDate(ad.startDate)}</td>
+                            <td className="p-4">{ad.durationDays} hari</td>
+                            <td className="p-4">
+                              {formatRupiah(ad.totalPayment)}
+                            </td>
+                            <td className="p-4">
+                              {getStatusBadge(ad.status)}
+                            </td>
+
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Mobile cards */}
+                  <div className="md:hidden divide-y">
+                    {filteredHistory.map((ad) => (
+                      <div key={ad.id} className="p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">{ad.city}</span>
+                          {getStatusBadge(ad.status)}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-sm">
+                          <div>
+                            <span className="text-muted-foreground">Tanggal: </span>
+                            <span>{formatDate(ad.startDate)}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Durasi: </span>
+                            <span>{ad.durationDays} hari</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Budget: </span>
+                            <span>{formatRupiah(ad.totalPayment)}</span>
+                          </div>
+
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </TabsContent>
+
+        {/* ── Data Iklan (Global) Tab ───────────────────────────────────── */}
+        <TabsContent value="data-iklan" className="space-y-4 mt-4">
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold">Database Performa Iklan</h2>
+              <p className="text-sm text-muted-foreground">
+                Data historis iklan untuk membantu Anda memilih kota yang tepat
+              </p>
+            </div>
+
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Cari berdasarkan kota atau promotor..."
+                value={globalSearch}
+                onChange={(e) => setGlobalSearch(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+
+            {(() => {
+              const filtered = globalAds.filter(ad => 
+                ad.city.toLowerCase().includes(globalSearch.toLowerCase()) ||
+                ad.promotor.name.toLowerCase().includes(globalSearch.toLowerCase())
+              );
+
+              if (filtered.length === 0) {
+                return (
+                  <Card>
+                    <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+                      <BarChart3 className="h-12 w-12 text-muted-foreground mb-4" />
+                      <h3 className="text-lg font-medium">Data tidak ditemukan</h3>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Belum ada data iklan yang tersedia untuk ditampilkan.
+                      </p>
+                    </CardContent>
+                  </Card>
+                );
+              }
+
+              return (
+                <div className="grid grid-cols-1 gap-4">
+                  {/* Desktop Table */}
+                  <div className="hidden md:block overflow-hidden rounded-lg border">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b bg-muted/50">
+                          <th className="p-4 text-left font-medium">Promotor</th>
+                          <th className="p-4 text-left font-medium">Kota</th>
+                          <th className="p-4 text-left font-medium">Leads</th>
+                          <th className="p-4 text-left font-medium">Klien</th>
+                          <th className="p-4 text-left font-medium">CPR</th>
+                          <th className="p-4 text-left font-medium">Budget/Hari</th>
+                          <th className="p-4 text-left font-medium">Durasi</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {filtered.map((ad) => (
+                          <tr key={ad.id} className="hover:bg-muted/30 transition-colors">
+                            <td className="p-4 font-medium">{ad.promotor.name}</td>
+                            <td className="p-4">{ad.city}</td>
+                            <td className="p-4">
+                              <Badge variant="outline" className="bg-green-50 text-green-700">
+                                {ad.adReport?.totalLeads} Leads
+                              </Badge>
+                            </td>
+                            <td className="p-4">
+                              <Badge variant="outline" className="bg-blue-50 text-blue-700">
+                                {ad.promotorResult?.totalClients || 0} Klien
+                              </Badge>
+                            </td>
+                            <td className="p-4 font-medium">
+                              {ad.adReport?.cpr ? formatRupiah(Math.round(ad.adReport.cpr)) : "-"}
+                            </td>
+                            <td className="p-4">{formatRupiah(ad.dailyBudget)}</td>
+                            <td className="p-4">{ad.durationDays} hari</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Mobile Cards */}
+                  <div className="md:hidden space-y-3">
+                    {filtered.map((ad) => (
+                      <Card key={ad.id} className="border-l-4 border-l-green-500">
+                        <CardHeader className="pb-2">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <CardTitle className="text-sm font-bold">{ad.city}</CardTitle>
+                              <CardDescription className="text-xs">{ad.promotor.name}</CardDescription>
+                            </div>
+                            <div className="flex flex-col items-end gap-1">
+                              <Badge variant="secondary" className="bg-green-100 text-green-800 text-[10px]">
+                                {ad.adReport?.totalLeads} Leads
+                              </Badge>
+                              <Badge variant="secondary" className="bg-blue-100 text-blue-800 text-[10px]">
+                                {ad.promotorResult?.totalClients || 0} Klien
+                              </Badge>
+                            </div>
+                          </div>
+                        </CardHeader>
+                        <CardContent className="space-y-3">
+                          <div className="grid grid-cols-2 gap-3 text-[11px]">
+                            <div className="space-y-0.5">
+                              <p className="text-muted-foreground uppercase">CPR</p>
+                              <p className="font-bold">{ad.adReport?.cpr ? formatRupiah(Math.round(ad.adReport.cpr)) : "-"}</p>
+                            </div>
+                            <div className="space-y-0.5">
+                              <p className="text-muted-foreground uppercase">Budget Harian</p>
+                              <p className="font-bold">{formatRupiah(ad.dailyBudget)}</p>
+                            </div>
+                            <div className="space-y-0.5">
+                              <p className="text-muted-foreground uppercase">Durasi</p>
+                              <p className="font-bold">{ad.durationDays} hari</p>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
+}

@@ -1,0 +1,279 @@
+"use client"
+
+import { useAuth } from "@/lib/auth-context"
+import { useState, useEffect } from "react"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { Badge } from "@/components/ui/badge"
+import { Separator } from "@/components/ui/separator"
+import {
+  Building2,
+  LogOut,
+  Bell,
+  Megaphone,
+  Palette,
+  Target,
+  Shield,
+  Menu,
+  X,
+} from "lucide-react"
+
+const navItems = [
+  { key: "dashboard", label: "Dashboard", icon: Building2 },
+]
+
+const roleConfig: Record<string, { label: string; color: string; icon: any }> = {
+  PROMOTOR: { label: "Promotor", color: "bg-amber-100 text-amber-800 border-amber-300", icon: Megaphone },
+  KONTEN_KREATOR: { label: "Konten Kreator", color: "bg-emerald-100 text-emerald-800 border-emerald-300", icon: Palette },
+  ADVERTISER: { label: "Advertiser", color: "bg-purple-100 text-purple-800 border-purple-300", icon: Target },
+  STIFIN: { label: "STIFIn Admin", color: "bg-rose-100 text-rose-800 border-rose-300", icon: Shield },
+}
+
+interface DashboardLayoutProps {
+  children: React.ReactNode
+}
+
+export function DashboardLayout({ children }: DashboardLayoutProps) {
+  const { user, logout } = useAuth()
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [notifications, setNotifications] = useState<any[]>([])
+  const [unreadCount, setUnreadCount] = useState(0)
+  const [showNotif, setShowNotif] = useState(false)
+
+  const fetchNotifications = async () => {
+    try {
+      const res = await fetch("/api/notifications")
+      const data = await res.json()
+      setNotifications(data.notifications || [])
+      setUnreadCount(data.unreadCount || 0)
+    } catch {
+      // silent fail
+    }
+  }
+
+  useEffect(() => {
+    if (!user) return
+
+    const load = async () => {
+      try {
+        const res = await fetch("/api/notifications")
+        const data = await res.json()
+        setNotifications(data.notifications || [])
+        setUnreadCount(data.unreadCount || 0)
+      } catch {
+        // silent fail
+      }
+    }
+
+    load()
+    const interval = setInterval(load, 30000)
+    return () => clearInterval(interval)
+  }, [user])
+
+  const markAsRead = async (id: string) => {
+    try {
+      await fetch(`/api/notifications/${id}/read`, { method: "POST" })
+      fetchNotifications()
+    } catch {
+      // silent fail
+    }
+  }
+
+  if (!user) return null
+
+  const config = roleConfig[user.role] || roleConfig.PROMOTOR
+  const RoleIcon = config.icon
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex">
+      {/* Sidebar Overlay (mobile) */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-40 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar */}
+      <aside
+        className={`fixed lg:static inset-y-0 left-0 z-50 w-64 bg-white border-r border-slate-200 flex flex-col transition-transform duration-300 ${
+          sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+        }`}
+      >
+        {/* Sidebar Header */}
+        <div className="p-4 flex items-center gap-3 border-b border-slate-100">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-rose-500 to-rose-600 flex items-center justify-center shadow-md">
+            <Building2 className="w-5 h-5 text-white" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="font-bold text-slate-900 text-sm truncate">STIFIn</h2>
+            <p className="text-xs text-slate-500 truncate">Manajemen Iklan</p>
+          </div>
+          <button
+            onClick={() => setSidebarOpen(false)}
+            className="lg:hidden p-1 hover:bg-slate-100 rounded"
+          >
+            <X className="w-4 h-4 text-slate-500" />
+          </button>
+        </div>
+
+        {/* Nav */}
+        <nav className="flex-1 p-3 space-y-1">
+          {navItems.map((item) => {
+            const Icon = item.icon
+            return (
+              <button
+                key={item.key}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg bg-rose-50 text-rose-700 font-medium text-sm"
+              >
+                <Icon className="w-4 h-4" />
+                {item.label}
+              </button>
+            )
+          })}
+        </nav>
+
+        {/* User Info */}
+        <div className="p-3 border-t border-slate-100">
+          <div className="flex items-center gap-3 p-3 rounded-lg bg-slate-50">
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-slate-300 to-slate-400 flex items-center justify-center text-white text-sm font-semibold">
+              {user.name.charAt(0).toUpperCase()}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-slate-900 truncate">{user.name}</p>
+              <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${config.color}`}>
+                {config.label}
+              </Badge>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col min-h-screen">
+        {/* Top Bar */}
+        <header className="sticky top-0 z-30 bg-white border-b border-slate-200 px-4 lg:px-6 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="lg:hidden p-2 hover:bg-slate-100 rounded-lg"
+            >
+              <Menu className="w-5 h-5 text-slate-600" />
+            </button>
+            <div className="flex items-center gap-2">
+              <RoleIcon className="w-4 h-4 text-slate-500" />
+              <h1 className="text-sm font-semibold text-slate-700 hidden sm:block">
+                Dashboard {config.label}
+              </h1>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Notifications */}
+            <div className="relative">
+              <button
+                onClick={() => setShowNotif(!showNotif)}
+                className="p-2 hover:bg-slate-100 rounded-lg relative"
+              >
+                <Bell className="w-5 h-5 text-slate-600" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 w-5 h-5 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {/* Notification Dropdown */}
+              {showNotif && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowNotif(false)} />
+                  <Card className="absolute right-0 top-12 z-50 w-80 shadow-xl border-slate-200">
+                    <CardContent className="p-0">
+                      <div className="p-3 border-b border-slate-100 flex items-center justify-between">
+                        <h3 className="font-semibold text-sm text-slate-900">Notifikasi</h3>
+                        <Badge variant="secondary" className="text-xs">
+                          {unreadCount} baru
+                        </Badge>
+                      </div>
+                      <ScrollArea className="h-72">
+                        {notifications.length === 0 ? (
+                          <div className="p-6 text-center text-sm text-slate-400">
+                            Belum ada notifikasi
+                          </div>
+                        ) : (
+                          notifications.slice(0, 20).map((notif: any) => (
+                            <div
+                              key={notif.id}
+                              className={`p-3 border-b border-slate-50 hover:bg-slate-50 transition-colors ${
+                                !notif.read ? "bg-rose-50/50" : ""
+                              }`}
+                            >
+                              <div className="flex items-start gap-2">
+                                {!notif.read && (
+                                  <div className="w-2 h-2 rounded-full bg-rose-500 mt-1.5 shrink-0" />
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-slate-900">{notif.title}</p>
+                                  <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{notif.message}</p>
+                                  <p className="text-[10px] text-slate-400 mt-1">
+                                    {new Date(notif.createdAt).toLocaleDateString("id-ID", {
+                                      day: "numeric",
+                                      month: "short",
+                                      year: "numeric",
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    })}
+                                  </p>
+                                  {!notif.read && (
+                                    <button
+                                      onClick={() => markAsRead(notif.id)}
+                                      className="text-[10px] text-rose-600 hover:text-rose-700 font-medium mt-1"
+                                    >
+                                      Tandai dibaca
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </ScrollArea>
+                    </CardContent>
+                  </Card>
+                </>
+              )}
+            </div>
+
+            <Separator orientation="vertical" className="h-6" />
+
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={logout}
+              className="text-slate-600 hover:text-rose-600"
+            >
+              <LogOut className="w-4 h-4 mr-1.5" />
+              <span className="hidden sm:inline">Keluar</span>
+            </Button>
+          </div>
+        </header>
+
+        {/* Page Content */}
+        <main className="flex-1 p-4 lg:p-6">
+          <div className="max-w-7xl mx-auto">
+            {children}
+          </div>
+        </main>
+
+        {/* Footer */}
+        <footer className="border-t border-slate-200 bg-white px-4 lg:px-6 py-3">
+          <div className="max-w-7xl mx-auto flex items-center justify-between text-xs text-slate-400">
+            <span>© 2025 STIFIn - Tes Minat & Bakat Genetik</span>
+            <span className="hidden sm:inline">v1.0.0</span>
+          </div>
+        </footer>
+      </div>
+    </div>
+  )
+}

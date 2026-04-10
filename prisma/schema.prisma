@@ -1,0 +1,82 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  password  String
+  role      String   // PROMOTOR, KONTEN_KREATOR, ADVERTISER, STIFIN
+  city      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  adRequests    AdRequest[]
+  notifications Notification[]
+}
+
+model AdRequest {
+  id              String          @id @default(cuid())
+  city            String
+  startDate       DateTime
+  durationDays    Int
+  dailyBudget     Int
+  totalBudget     Int
+  ppn             Int
+  totalPayment    Int
+  status          String          @default("MENUNGGU_PEMBAYARAN")
+  briefType       String?
+  briefContent    String?
+  paymentProofUrl String?
+  contentUrl      String?
+  adStartDate     DateTime?
+  adEndDate       DateTime?
+  promotorId      String
+  promotor        User            @relation(fields: [promotorId], references: [id], onDelete: Cascade)
+  adReport        AdReport?
+  promotorResult  PromotorResult?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+model AdReport {
+  id          String    @id @default(cuid())
+  adRequestId String    @unique
+  adRequest   AdRequest @relation(fields: [adRequestId], references: [id], onDelete: Cascade)
+  cpr         Float?
+  totalLeads  Int?
+  amountSpent Int?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model PromotorResult {
+  id           String    @id @default(cuid())
+  adRequestId  String    @unique
+  adRequest    AdRequest @relation(fields: [adRequestId], references: [id], onDelete: Cascade)
+  totalClients Int
+  previousTotalClients Int?
+  note         String?
+  status       String    @default("PENDING") // PENDING, VALID
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  type      String
+  read      Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

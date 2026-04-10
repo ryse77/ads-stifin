@@ -1,0 +1,832 @@
+"use client"
+
+import { useState, useEffect, useCallback, useRef } from "react"
+import { useAuth } from "@/lib/auth-context"
+import { toast } from "sonner"
+import {
+  Play,
+  Upload,
+  FileText,
+  Bell,
+  Clock,
+  CheckCircle,
+  Copy,
+  Megaphone,
+  Eye,
+  Loader2,
+} from "lucide-react"
+
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardContent,
+  CardDescription,
+} from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Skeleton } from "@/components/ui/skeleton"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { Separator } from "@/components/ui/separator"
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet"
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu"
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+interface AdRequest {
+  id: string
+  promotor: { name: string }
+  city: string
+  startDate: string
+  durationDays: number
+  dailyBudget: number
+  totalBudget: number
+  ppn: number
+  totalPayment: number
+  status: string
+  briefType: string | null
+  briefContent: string | null
+  paymentProofUrl: string | null
+  contentUrl: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+interface Notification {
+  id: string
+  message: string
+  read: boolean
+  createdAt: string
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const formatRupiah = (value: number): string =>
+  `Rp ${value.toLocaleString("id-ID")}`
+
+const formatDate = (dateStr: string): string => {
+  const date = new Date(dateStr)
+  return date.toLocaleDateString("id-ID", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  })
+}
+
+const formatDateTime = (dateStr: string): string => {
+  const date = new Date(dateStr)
+  return date.toLocaleDateString("id-ID", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
+const statusConfig: Record<
+  string,
+  {
+    label: string
+    variant: "default" | "secondary" | "destructive" | "outline"
+    className: string
+  }
+> = {
+  MENUNGGU_PEMBAYARAN: {
+    label: "Menunggu Pembayaran",
+    variant: "outline",
+    className: "border-amber-500 text-amber-700 bg-amber-50",
+  },
+  MENUNGGU_KONTEN: {
+    label: "Menunggu Konten",
+    variant: "outline",
+    className: "border-orange-500 text-orange-700 bg-orange-50",
+  },
+  DIPROSES: {
+    label: "Diproses",
+    variant: "outline",
+    className: "border-blue-500 text-blue-700 bg-blue-50",
+  },
+  KONTEN_SELESAI: {
+    label: "Konten Selesai",
+    variant: "outline",
+    className: "border-green-500 text-green-700 bg-green-50",
+  },
+  IKLAN_BERJALAN: {
+    label: "Iklan Berjalan",
+    variant: "outline",
+    className: "border-purple-500 text-purple-700 bg-purple-50",
+  },
+  SELESAI: {
+    label: "Selesai",
+    variant: "secondary",
+    className: "border-gray-400 text-gray-600 bg-gray-100",
+  },
+}
+
+const getStatusBadge = (status: string) => {
+  const config = statusConfig[status]
+  if (!config) {
+    return (
+      <Badge variant="outline" className="border-gray-400 text-gray-600">
+        {status}
+      </Badge>
+    )
+  }
+  return (
+    <Badge variant={config.variant} className={config.className}>
+      {config.label}
+    </Badge>
+  )
+}
+
+const getBriefTypeBadge = (briefType: string) => {
+  if (briefType === "JJ") {
+    return (
+      <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200">
+        Jedag Jedug
+      </Badge>
+    )
+  }
+  if (briefType === "VO") {
+    return (
+      <Badge className="bg-violet-100 text-violet-800 border-violet-300 hover:bg-violet-200">
+        Voice Over
+      </Badge>
+    )
+  }
+  return <Badge variant="secondary">{briefType}</Badge>
+}
+
+// ─── Component ───────────────────────────────────────────────────────────────
+
+export default function KontenKreatorDashboard() {
+  const { user } = useAuth()
+  const [adRequests, setAdRequests] = useState<AdRequest[]>([])
+  const [notifications, setNotifications] = useState<Notification[]>([])
+  const [loading, setLoading] = useState(true)
+
+  // Action states
+  const [processingId, setProcessingId] = useState<string | null>(null)
+  const [uploadDialogId, setUploadDialogId] = useState<string | null>(null)
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
+
+  // Brief sheet state
+  const [briefSheetOpen, setBriefSheetOpen] = useState(false)
+  const [selectedBrief, setSelectedBrief] = useState<AdRequest | null>(null)
+
+  // Notification states
+  const [notifLoading, setNotifLoading] = useState(false)
+  const [readingNotifId, setReadingNotifId] = useState<string | null>(null)
+
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // ── Fetch ad requests ────────────────────────────────────────────────────
+
+  const fetchAdRequests = useCallback(async () => {
+    try {
+      const res = await fetch("/api/ad-requests")
+      if (!res.ok) throw new Error("Gagal mengambil data")
+      const data: AdRequest[] = await res.json()
+      // Konten kreator hanya memproses iklan yang sudah dibayar (minimal MENUNGGU_KONTEN)
+      const filteredData = data.filter((ad) => ad.status !== "MENUNGGU_PEMBAYARAN")
+      setAdRequests(filteredData)
+    } catch {
+      toast.error("Gagal memuat data pengajuan iklan")
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (user) {
+      fetchAdRequests()
+    }
+  }, [user, fetchAdRequests])
+
+  // ── Fetch notifications ──────────────────────────────────────────────────
+
+  const fetchNotifications = useCallback(async () => {
+    setNotifLoading(true)
+    try {
+      const res = await fetch("/api/notifications")
+      if (!res.ok) throw new Error("Gagal mengambil notifikasi")
+      const data = await res.json()
+      const rawNotifs: Notification[] = data.notifications || []
+      
+      // Filter out undesirable historical notifications
+      const filteredNotifs = rawNotifs.filter(n => {
+        // Hide "Bukti Transfer Diterima" (old title)
+        if (n.title === "Bukti Transfer Diterima") return false
+        // Hide early "Pengajuan Iklan Baru" that are waiting for payment
+        if (n.title === "Pengajuan Iklan Baru" && n.message.includes("Menunggu bukti pembayaran")) return false
+        return true
+      })
+      
+      setNotifications(filteredNotifs)
+    } catch {
+      // Silently fail for notifications
+    } finally {
+      setNotifLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (user) {
+      fetchNotifications()
+    }
+  }, [user, fetchNotifications])
+
+  // ── Computed stats ───────────────────────────────────────────────────────
+
+  const menungguKontenCount = adRequests.filter(
+    (r) => r.status === "MENUNGGU_KONTEN"
+  ).length
+  const diprosesCount = adRequests.filter((r) => r.status === "DIPROSES").length
+  const kontenSelesaiCount = adRequests.filter(
+    (r) => r.status === "KONTEN_SELESAI"
+  ).length
+  const unreadNotifCount = notifications.filter((n) => !n.read).length
+
+  // ── Process content (MENUNGGU_KONTEN → DIPROSES) ─────────────────────────
+
+  const handleProcessContent = async (id: string) => {
+    setProcessingId(id)
+    try {
+      const res = await fetch(`/api/ad-requests/${id}/process-content`, {
+        method: "POST",
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || "Gagal memproses konten")
+      }
+      toast.success("Pengajuan berhasil diproses!")
+      fetchAdRequests()
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Gagal memproses konten"
+      toast.error(message)
+    } finally {
+      setProcessingId(null)
+    }
+  }
+
+  // ── Upload content (DIPROSES → KONTEN_SELESAI) ───────────────────────────
+
+  const handleUploadContent = async () => {
+    if (!uploadDialogId || !uploadFile) {
+      toast.error("Pilih file konten terlebih dahulu")
+      return
+    }
+
+    setUploading(true)
+    try {
+      // 1. Upload file
+      const formData = new FormData()
+      formData.append("file", uploadFile)
+      const uploadRes = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      })
+      if (!uploadRes.ok) throw new Error("Gagal upload file")
+      const { url } = await uploadRes.json()
+
+      // 2. Submit content URL
+      const contentRes = await fetch(
+        `/api/ad-requests/${uploadDialogId}/upload-content`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contentUrl: url }),
+        }
+      )
+      if (!contentRes.ok) {
+        const err = await contentRes.json()
+        throw new Error(err.error || "Gagal mengupload konten")
+      }
+
+      toast.success("Konten berhasil diupload!")
+      setUploadDialogId(null)
+      setUploadFile(null)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ""
+      }
+      fetchAdRequests()
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Gagal mengupload konten"
+      toast.error(message)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  // ── Mark notification as read ────────────────────────────────────────────
+
+  const handleMarkRead = async (notifId: string) => {
+    setReadingNotifId(notifId)
+    try {
+      const res = await fetch(`/api/notifications/${notifId}/read`, {
+        method: "POST",
+      })
+      if (!res.ok) throw new Error("Gagal menandai notifikasi")
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === notifId ? { ...n, read: true } : n))
+      )
+    } catch {
+      toast.error("Gagal menandai notifikasi sebagai dibaca")
+    } finally {
+      setReadingNotifId(null)
+    }
+  }
+
+  // ── Copy brief to clipboard ──────────────────────────────────────────────
+
+  const handleCopyBrief = async (content: string) => {
+    try {
+      await navigator.clipboard.writeText(content)
+      toast.success("Brief berhasil disalin!")
+    } catch {
+      toast.error("Gagal menyalin brief")
+    }
+  }
+
+  // ── Loading state ────────────────────────────────────────────────────────
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        {/* Header skeleton */}
+        <div className="flex items-center justify-between">
+          <div>
+            <Skeleton className="h-8 w-56 mb-2" />
+            <Skeleton className="h-4 w-72" />
+          </div>
+          <Skeleton className="h-10 w-10 rounded-full" />
+        </div>
+        {/* Stats skeleton */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {[1, 2, 3].map((i) => (
+            <Card key={i}>
+              <CardHeader className="pb-2">
+                <Skeleton className="h-4 w-28" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-8 w-16" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        {/* Cards skeleton */}
+        <div className="space-y-4">
+          {[1, 2, 3].map((i) => (
+            <Card key={i}>
+              <CardHeader>
+                <Skeleton className="h-5 w-48" />
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {[1, 2, 3, 4].map((j) => (
+                    <Skeleton key={j} className="h-12 w-full rounded-lg" />
+                  ))}
+                </div>
+                <Skeleton className="h-10 w-32" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return null
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  return (
+    <div className="space-y-6">
+      {/* ── Header with Notification Bell ─────────────────────────────────── */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">
+            Dashboard Konten Kreator
+          </h1>
+          <p className="text-muted-foreground">
+            Kelola pembuatan konten iklan untuk semua pengajuan
+          </p>
+        </div>
+
+
+      </div>
+
+      {/* ── Stats Cards ───────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Menunggu Diproses
+            </CardTitle>
+            <Clock className="h-4 w-4 text-orange-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-orange-600">
+              {menungguKontenCount}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Pengajuan siap dibuat konten
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Sedang Diproses
+            </CardTitle>
+            <Loader2 className="h-4 w-4 text-blue-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-blue-600">
+              {diprosesCount}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Konten sedang dalam pengerjaan
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Konten Selesai
+            </CardTitle>
+            <CheckCircle className="h-4 w-4 text-green-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-green-600">
+              {kontenSelesaiCount}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Konten sudah selesai dibuat
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* ── Ad Request Cards ──────────────────────────────────────────────── */}
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">Daftar Pengajuan Iklan</h2>
+          <p className="text-sm text-muted-foreground">
+            Semua pengajuan iklan yang memerlukan konten
+          </p>
+        </div>
+
+        {adRequests.length === 0 ? (
+          <Card>
+            <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+              <Megaphone className="h-12 w-12 text-muted-foreground mb-4" />
+              <h3 className="text-lg font-medium">Belum ada pengajuan</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                Pengajuan iklan baru akan muncul di sini
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-4">
+            {adRequests.map((ad) => (
+              <Card key={ad.id}>
+                <CardHeader>
+                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                    <div className="space-y-1">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <Megaphone className="h-4 w-4 text-muted-foreground" />
+                        {ad.promotor?.name} - Iklan {ad.city}
+                      </CardTitle>
+                      <CardDescription className="text-xs">
+                        Dibuat {formatDate(ad.createdAt)}
+                      </CardDescription>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {ad.briefType && getBriefTypeBadge(ad.briefType)}
+                      {getStatusBadge(ad.status)}
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+
+                  {/* Brief Content Preview */}
+                  {ad.briefContent && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-medium flex items-center gap-2">
+                          <FileText className="h-4 w-4" />
+                          Brief Konten
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => {
+                              setSelectedBrief(ad)
+                              setBriefSheetOpen(true)
+                            }}
+                          >
+                            <Eye className="h-3 w-3 mr-1" />
+                            Lihat Detail
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="space-y-3">
+                        {ad.briefContent.split("\n\n------------------------------------------------------------\n\n").map((part, idx) => {
+                          const isJJ = part.includes("JEDAG-JEDUG");
+                          const isVO = part.includes("VOICE OVER");
+                          const title = isJJ ? "BRIEF JJ" : isVO ? "BRIEF VO" : "BRIEF KONTEN";
+
+                          const cleanPart = part
+                            .replace(/^\[ BRIEF JEDAG-JEDUG \(JJ\) \]\n*/, '')
+                            .replace(/^\[ BRIEF VOICE OVER \(VO\) \]\n*/, '');
+
+                          return (
+                            <div key={idx} className="relative group">
+                              <p className="text-xs font-semibold text-muted-foreground mb-1">{title}</p>
+                              <div className="absolute top-6 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  className="h-6 px-2 text-[10px]"
+                                  onClick={() => handleCopyBrief(cleanPart)}
+                                >
+                                  <Copy className="h-3 w-3 mr-1" />
+                                  Salin
+                                </Button>
+                              </div>
+                              <pre className="rounded-lg bg-muted/50 border p-4 text-xs leading-relaxed whitespace-pre-wrap font-mono max-h-48 overflow-y-auto">
+                                {cleanPart}
+                              </pre>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+
+
+                  {/* Content URL if already uploaded */}
+                  {ad.contentUrl && (
+                    <div className="text-sm">
+                      <span className="text-muted-foreground">Konten: </span>
+                      <a
+                        href={ad.contentUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline inline-flex items-center gap-1"
+                      >
+                        <Eye className="h-3 w-3" />
+                        Lihat Konten
+                      </a>
+                    </div>
+                  )}
+
+                  {/* Action Buttons based on status */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* MENUNGGU_KONTEN → PROSES button */}
+                    {ad.status === "MENUNGGU_KONTEN" && (
+                      <Button
+                        className="bg-green-600 hover:bg-green-700 text-white"
+                        size="sm"
+                        disabled={processingId === ad.id}
+                        onClick={() => handleProcessContent(ad.id)}
+                      >
+                        {processingId === ad.id ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                          <Play className="h-4 w-4 mr-2" />
+                        )}
+                        PROSES
+                      </Button>
+                    )}
+
+                    {/* DIPROSES → Upload Konten button */}
+                    {ad.status === "DIPROSES" && (
+                      <Dialog
+                        open={uploadDialogId === ad.id}
+                        onOpenChange={(open) => {
+                          if (open) {
+                            setUploadDialogId(ad.id)
+                          } else {
+                            setUploadDialogId(null)
+                            setUploadFile(null)
+                          }
+                        }}
+                      >
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setUploadDialogId(ad.id)}
+                        >
+                          <Upload className="h-4 w-4 mr-2" />
+                          Upload Konten
+                        </Button>
+                        <DialogContent className="sm:max-w-md">
+                          <DialogHeader>
+                            <DialogTitle>Upload Konten Iklan</DialogTitle>
+                            <DialogDescription>
+                              Upload file konten iklan untuk pengajuan di{" "}
+                              <strong>{ad.city}</strong> oleh{" "}
+                              <strong>{ad.promotor?.name}</strong>
+                            </DialogDescription>
+                          </DialogHeader>
+                          <div className="space-y-4 py-2">
+                            {/* Brief info */}
+                            {ad.briefType && (
+                              <div className="flex items-center gap-2 text-sm">
+                                <span className="text-muted-foreground">
+                                  Tipe Brief:
+                                </span>
+                                {getBriefTypeBadge(ad.briefType)}
+                              </div>
+                            )}
+                            <div className="space-y-2">
+                              <Label htmlFor={`content-${ad.id}`}>
+                                File Konten
+                              </Label>
+                              <Input
+                                id={`content-${ad.id}`}
+                                ref={fileInputRef}
+                                type="file"
+                                accept="video/*,image/*,.mp4,.mov,.avi,.mkv,.jpg,.jpeg,.png"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0]
+                                  if (file) setUploadFile(file)
+                                }}
+                              />
+                              {uploadFile && (
+                                <p className="text-xs text-muted-foreground">
+                                  Dipilih: {uploadFile.name} (
+                                  {(uploadFile.size / 1024 / 1024).toFixed(2)} MB)
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          <DialogFooter>
+                            <Button
+                              variant="outline"
+                              onClick={() => {
+                                setUploadDialogId(null)
+                                setUploadFile(null)
+                              }}
+                              disabled={uploading}
+                            >
+                              Batal
+                            </Button>
+                            <Button
+                              onClick={handleUploadContent}
+                              disabled={uploading || !uploadFile}
+                              className="bg-green-600 hover:bg-green-700 text-white"
+                            >
+                              {uploading ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                  Mengupload...
+                                </>
+                              ) : (
+                                <>
+                                  <Upload className="h-4 w-4 mr-2" />
+                                  Upload
+                                </>
+                              )}
+                            </Button>
+                          </DialogFooter>
+                        </DialogContent>
+                      </Dialog>
+                    )}
+
+                    {/* Other statuses → info text */}
+                    {!["MENUNGGU_KONTEN", "DIPROSES"].includes(ad.status) && (
+                      <p className="text-sm text-muted-foreground italic">
+                        {ad.status === "MENUNGGU_PEMBAYARAN" &&
+                          "Menunggu promotor melakukan pembayaran."}
+                        {(ad.status === "KONTEN_SELESAI" ||
+                          ad.status === "IKLAN_BERJALAN" ||
+                          ad.status === "SELESAI") &&
+                          "Konten untuk pengajuan ini sudah selesai diproses."}
+                      </p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Brief Detail Sheet ────────────────────────────────────────────── */}
+      <Sheet open={briefSheetOpen} onOpenChange={setBriefSheetOpen}>
+        <SheetContent side="right" className="sm:max-w-lg w-full">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              Detail Brief Konten
+            </SheetTitle>
+            <SheetDescription>
+              {selectedBrief && (
+                <span>
+                  {selectedBrief.city} &middot; {selectedBrief.promotor?.name}
+                </span>
+              )}
+            </SheetDescription>
+          </SheetHeader>
+          <div className="flex-1 overflow-hidden flex flex-col p-4 pt-0 gap-4">
+            {/* Brief meta info */}
+            {selectedBrief && (
+              <>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {selectedBrief.briefType &&
+                    getBriefTypeBadge(selectedBrief.briefType)}
+                  {getStatusBadge(selectedBrief.status)}
+                </div>
+
+                <Separator />
+
+
+
+                {/* Brief content */}
+                {selectedBrief.briefContent ? (
+                  <div className="flex-1 flex flex-col gap-4 min-h-0">
+                    <p className="text-sm font-medium shrink-0">Isi Brief</p>
+                    <ScrollArea className="flex-1">
+                      <div className="space-y-6 pb-4">
+                        {selectedBrief.briefContent.split("\n\n------------------------------------------------------------\n\n").map((part, idx) => {
+                          const isJJ = part.includes("JEDAG-JEDUG");
+                          const isVO = part.includes("VOICE OVER");
+                          const title = isJJ ? "BRIEF JJ" : isVO ? "BRIEF VO" : "BRIEF KONTEN";
+
+                          const cleanPart = part
+                            .replace(/^\[ BRIEF JEDAG-JEDUG \(JJ\) \]\n*/, '')
+                            .replace(/^\[ BRIEF VOICE OVER \(VO\) \]\n*/, '');
+
+                          return (
+                            <div key={idx} className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm font-semibold text-muted-foreground">{title}</p>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  onClick={() => handleCopyBrief(cleanPart)}
+                                >
+                                  <Copy className="h-3 w-3 mr-1" />
+                                  Salin
+                                </Button>
+                              </div>
+                              <pre className="rounded-lg bg-muted/50 border p-4 text-sm leading-relaxed whitespace-pre-wrap font-mono">
+                                {cleanPart}
+                              </pre>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </ScrollArea>
+                  </div>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center">
+                    <p className="text-muted-foreground text-sm">
+                      Brief belum tersedia
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
+    </div>
+  )
+}
