@@ -1,0 +1,54 @@
+# Example Wrangler Configuration untuk ads-stifin
+# Copy sebagai wrangler.toml setelah adjust dengan data Anda
+
+name = "ads-stifin"
+type = "javascript"
+main = ".wrangler/tmp/bundle-[hash]/index.js"
+compatibility_date = "2024-12-16"
+compatibility_flags = ["nodejs_compat"]
+
+# Account info (dapatkan dari https://dash.cloudflare.com/profile/api-tokens)
+account_id = "your_account_id_here"
+workers_dev = true
+
+[build]
+command = "npm run build"
+cwd = "./"
+watch_paths = ["src/**/*.tsx", "src/**/*.ts"]
+
+[build.upload]
+format = "service-worker"
+main = ".wrangler/tmp/bundle-[hash]/index.js"
+
+# Production environment
+[env.production]
+name = "ads-stifin-production"
+route = "your-domain.com/*"
+zone_id = "your_zone_id_here"
+
+# Variabel environment untuk production
+[env.production.vars]
+ENVIRONMENT = "production"
+NODE_ENV = "production"
+LOG_LEVEL = "info"
+
+# Database secret (masuk via Cloudflare dashboard, jangan di sini!)
+# DATABASE_URL harus diset via Settings > Environment Variables
+
+# Analytics
+[analytics]
+enabled = true
+
+# Limits
+[limits]
+cpu_ms = 10000  # 10 detik untuk execution (gratis 30s, upgrade ke Paid untuk 10m)
+
+# Triggers untuk health check (optional)
+[[triggers.crons]]
+cron = "0 */6 * * *"  # Setiap 6 jam, ping app untuk prevent cold starts
+
+# Routes
+[[routes]]
+pattern = "your-domain.com/api/*"
+zone_name = "your-domain.com"
+custom_domain = true
